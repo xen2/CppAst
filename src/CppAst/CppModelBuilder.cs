@@ -48,6 +48,12 @@ namespace CppAst
             return VisitMember(cursor, parent, data);
         }
 
+        private bool TryGetDeclarationContainer(CXCursor cursor, out CppContainerContext containerContext)
+        {
+            var fullName = cursor.UnifiedSymbolResolution.CString;
+            return _containers.TryGetValue(fullName, out containerContext);
+        }
+
         private CppContainerContext GetOrCreateDeclarationContainer(CXCursor cursor, CXClientData data)
         {
             CppContainerContext containerContext;
@@ -1617,6 +1623,9 @@ namespace CppAst
 
                 case CXTypeKind.CXType_Unexposed:
                 {
+                    // Try to parse template instantiation
+                    if (TryParseInstantiationType(cursor, type, parent, data, out var instantiationType))
+                        return instantiationType;
                     return new CppUnexposedType(type.ToString())  { SizeOf = (int)type.SizeOf };
                 }
 
@@ -1629,6 +1638,30 @@ namespace CppAst
                     return new CppUnexposedType(type.ToString()) { SizeOf = (int)type.SizeOf };
                 }
             }
+        }
+
+        private bool TryParseInstantiationType(CXCursor cursor, CXType type, CXCursor parent, CXClientData data, out CppType instantiationType)
+        {
+            instantiationType = null;
+
+            var typeName = type.ToString();
+            if (!typeName.Contains("<"))
+                return false;
+
+            if (type.NumTemplateArguments > 0)
+            {
+                if (!TryGetDeclarationContainer(cursor.SpecializedCursorTemplate, out var context))
+                {
+                    Unhandled(cursor.SpecializedCursorTemplate);
+                    return false;
+                }
+                var templateType = (CppType)context.Container;
+                cursor.VisitChildren((cxCursor, parent1, clientData) =>
+                {
+                    return CXChildVisitResult.CXChildVisit_Continue;
+                }, new CXClientData());
+            }
+            return true;
         }
 
         private CppFunctionType VisitFunctionType(CXCursor cursor, CXType type, CXCursor parent, CXClientData data)
